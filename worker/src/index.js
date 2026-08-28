@@ -179,12 +179,9 @@ async function handleFetch(request, env, ctx) {
 async function login(request, db) {
   const { email, password } = await request.json();
   if (!email || !password) return json({ error: 'email and password required' }, 400);
-  console.log('LOGIN ATTEMPT', JSON.stringify({ email, passwordLen: password.length }));
   const u = await one(db, 'SELECT * FROM users WHERE email = ?', email);
-  console.log('USER FOUND', JSON.stringify(u ? { id: u.id, email: u.email, hashLen: u.password_hash.length, saltLen: u.password_salt.length } : null));
   if (!u) return json({ error: 'invalid credentials' }, 401);
   const ok = await verifyPassword(password, u.password_salt, u.password_hash);
-  console.log('VERIFY RESULT', ok);
   if (!ok) return json({ error: 'invalid credentials' }, 401);
   const session = await createSession(db, u.id);
   return json({ token: session.token, expires: session.expires, user: { id: u.id, email: u.email, name: u.name } });
@@ -213,20 +210,30 @@ async function runLeadGen(db, env, productId, area, trigger = 'manual') {
     const queries = buildQueries(product, area);
     const seenUrls = new Set();
     let hits = [];
+    let lastSearchError = null;
+
+    const tavilyKey = await env.TAVILY_API_KEY.get();
+    if (!tavilyKey) throw new Error('TAVILY_API_KEY secret is empty or not configured in Secrets Store');
 
     for (const q of queries) {
       try {
-        const results = await tavilySearch(env.TAVILY_API_KEY, q, { maxResults: 8 });
+        const results = await tavilySearch(tavilyKey, q, { maxResults: 8 });
         for (const r of results) {
           if (seenUrls.has(r.url)) continue;
           seenUrls.add(r.url);
           hits.push(r);
         }
       } catch (e) {
-        // one bad query shouldn't kill the whole run
+        // one bad query shouldn't kill the whole run, but remember the error
+        // so we can surface it if EVERY query fails (e.g. bad API key)
+        lastSearchError = e.message;
         continue;
       }
       if (hits.length > 60) break; // cap total work per run
+    }
+
+    if (hits.length === 0 && lastSearchError) {
+      throw new Error(`All searches failed — last error: ${lastSearchError}`);
     }
 
     await run(db, 'UPDATE workflow_runs SET queries_used=?, hits_scanned=? WHERE id=?', queries.length, hits.length, runId);
@@ -319,9 +326,10 @@ async function notifyApprovers(db, env, { runId, product, area, leadsFound }) {
     `${leadsFound} outreach email draft(s) are waiting for your approval in the Approval Queue tab: ${dashboardUrl}\n\n` +
     `— Snehal Leadgen Pipeline`;
 
+  const senderEmail = await env.SENDER_EMAIL.get();
   const payload = {
     personalizations: [{ to: [{ email: approvalEmail }] }],
-    from: { email: env.SENDER_EMAIL, name: 'Snehal Leadgen Pipeline' },
+    from: { email: senderEmail, name: 'Snehal Leadgen Pipeline' },
     subject: `${leadsFound} new lead(s) ready for approval — ${product.name}`,
     content: [{ type: 'text/plain', value: body }],
   };
@@ -359,9 +367,10 @@ async function sendOutreach(db, env, id) {
   if (item.status !== 'approved') return json({ error: 'must be approved before sending' }, 400);
   if (!item.email) return json({ error: 'lead has no email' }, 400);
 
+  const senderEmail = await env.SENDER_EMAIL.get();
   const payload = {
     personalizations: [{ to: [{ email: item.email }] }],
-    from: { email: env.SENDER_EMAIL, name: 'Team Snehal Printers' },
+    from: { email: senderEmail, name: 'Team Snehal Printers' },
     subject: item.subject,
     content: [{ type: 'text/plain', value: item.body }],
   };
