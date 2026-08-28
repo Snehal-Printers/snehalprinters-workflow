@@ -179,9 +179,12 @@ async function handleFetch(request, env, ctx) {
 async function login(request, db) {
   const { email, password } = await request.json();
   if (!email || !password) return json({ error: 'email and password required' }, 400);
+  console.log('LOGIN ATTEMPT', JSON.stringify({ email, passwordLen: password.length }));
   const u = await one(db, 'SELECT * FROM users WHERE email = ?', email);
+  console.log('USER FOUND', JSON.stringify(u ? { id: u.id, email: u.email, hashLen: u.password_hash.length, saltLen: u.password_salt.length } : null));
   if (!u) return json({ error: 'invalid credentials' }, 401);
   const ok = await verifyPassword(password, u.password_salt, u.password_hash);
+  console.log('VERIFY RESULT', ok);
   if (!ok) return json({ error: 'invalid credentials' }, 401);
   const session = await createSession(db, u.id);
   return json({ token: session.token, expires: session.expires, user: { id: u.id, email: u.email, name: u.name } });
