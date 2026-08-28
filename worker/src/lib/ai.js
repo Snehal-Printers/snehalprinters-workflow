@@ -1,6 +1,22 @@
 const MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';
 
+// Workers AI response shape is normally { response: "..." }, but can occasionally
+// come back as something else (nested object, array of tool-call-style chunks,
+// etc. depending on model/edge case) — never trust it's a plain string.
+function extractResponseText(res) {
+  let text = res?.response ?? res?.result?.response ?? '';
+  if (typeof text !== 'string') {
+    try {
+      text = JSON.stringify(text);
+    } catch {
+      text = '';
+    }
+  }
+  return text;
+}
+
 function extractJson(text) {
+  if (typeof text !== 'string' || !text) return null;
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1) return null;
@@ -31,8 +47,13 @@ Snippet: ${hit.content?.slice(0, 500) || ''}
 Respond with ONLY minified JSON, no prose, no markdown:
 {"is_company": true|false, "company_name": "string or null", "is_pune_midc_area": true|false, "area_evidence": "short quote/phrase from snippet or null", "relevance_score": 0-100, "relevance_reason": "one short sentence"}`;
 
-  const res = await ai.run(MODEL, { messages: [{ role: 'user', content: prompt }], max_tokens: 300 });
-  const text = res.response || res.result?.response || '';
+  let res;
+  try {
+    res = await ai.run(MODEL, { messages: [{ role: 'user', content: prompt }], max_tokens: 300 });
+  } catch (e) {
+    return { is_company: false, company_name: null, is_pune_midc_area: false, area_evidence: null, relevance_score: 0, relevance_reason: `AI call failed: ${e.message}` };
+  }
+  const text = extractResponseText(res);
   const json = extractJson(text);
   if (!json) {
     return { is_company: false, company_name: null, is_pune_midc_area: false, area_evidence: null, relevance_score: 0, relevance_reason: 'AI parse failed' };
@@ -62,8 +83,13 @@ Rules:
 Respond with ONLY minified JSON, no prose:
 {"subject": "string", "body": "string"}`;
 
-  const res = await ai.run(MODEL, { messages: [{ role: 'user', content: prompt }], max_tokens: 350 });
-  const text = res.response || res.result?.response || '';
+  let res;
+  try {
+    res = await ai.run(MODEL, { messages: [{ role: 'user', content: prompt }], max_tokens: 350 });
+  } catch (e) {
+    res = null;
+  }
+  const text = res ? extractResponseText(res) : '';
   const json = extractJson(text);
   if (!json) {
     return {
