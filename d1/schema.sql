@@ -91,3 +91,8 @@ CREATE TABLE IF NOT EXISTS outreach_queue (
 CREATE INDEX IF NOT EXISTS idx_leads_run ON leads(run_id);
 CREATE INDEX IF NOT EXISTS idx_leads_domain ON leads(domain);
 CREATE INDEX IF NOT EXISTS idx_outreach_status ON outreach_queue(status);
+
+-- ─── Migration: add candidates_qualified column to workflow_runs ──────────────
+-- Run this if you already have the DB created with the original schema:
+--   wrangler d1 execute snehal-leadgen --command="ALTER TABLE workflow_runs ADD COLUMN candidates_qualified INTEGER DEFAULT 0"
+ALTER TABLE workflow_runs ADD COLUMN candidates_qualified INTEGER DEFAULT 0;
