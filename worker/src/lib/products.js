@@ -1,4 +1,16 @@
-import { fetchHtml } from './scrape.js';
+async function fetchHtml(url, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SnehalLeadBot/1.0)' },
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch { return null; }
+  finally { clearTimeout(t); }
+}
 
 // Generic product-listing scraper: looks for common e-commerce/catalog patterns
 // (product cards, links containing /product/, h2/h3 titles). Tuned to be
