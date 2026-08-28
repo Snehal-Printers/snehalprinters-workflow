@@ -46,8 +46,15 @@ wrangler d1 execute snehal-leadgen --remote --file=../d1/schema.sql
 node scripts/create-user.js "you@snehalprinters.in" "ChooseAStrongPassword" "Your Name"
 ```
 
-This prints a `wrangler d1 execute` command — run it as shown to insert the user into D1.
+This writes a `.sql` file and prints two commands: one to run it, one to verify it landed.
 Repeat for each teammate who needs access.
+
+> ⚠️ **"Invalid credentials" / 401 after creating a user?** By far the most common cause is
+> forgetting `--remote`. Without it, `wrangler d1 execute` writes to a local sqlite file on
+> your machine — the user exists there, but the **deployed** Worker reads from the remote
+> (production) D1 database, where that user was never inserted. Always run the printed
+> command exactly as shown (it includes `--remote`), then run the printed verify command
+> to confirm the row is actually in the remote DB before trying to log in.
 
 ## 3. Set secrets (Cloudflare Secrets Store)
 

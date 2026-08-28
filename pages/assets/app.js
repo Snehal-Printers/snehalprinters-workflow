@@ -55,6 +55,10 @@ document.getElementById('login-btn').addEventListener('click', async () => {
   }
 });
 
+document.getElementById('login-password').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('login-btn').click();
+});
+
 document.getElementById('logout-btn').addEventListener('click', () => {
   localStorage.removeItem('token');
   state.token = null;
