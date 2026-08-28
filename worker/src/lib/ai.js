@@ -38,7 +38,9 @@ export async function analyzeHit(ai, hit, product, area) {
 We sell: "${product.name}"${product.keywords ? ` (related: ${product.keywords})` : ''}.
 Target buyers are companies physically located in the ${area} industrial belt near Pune, Maharashtra, India.
 
-Given this raw web search hit, decide if it represents a real company (not a news article, blog, job listing, or generic directory homepage) that could plausibly need to BUY "${product.name}" for its business (packaging, labels, signage, stationery, corporate printing, etc. depending on product).
+Given this raw web search hit, decide if it represents ONE SPECIFIC REAL COMPANY's own website (not a news article, blog, job listing, PDF/document, government or association member-list page, generic directory homepage/search-results page, or any page that just mentions many companies) that could plausibly need to BUY "${product.name}" for its business (packaging, labels, signage, stationery, corporate printing, etc. depending on product).
+
+Reject (is_company: false) anything that is: a downloadable document or file, a list/directory of multiple companies rather than one company's own page, a news/blog article, a job posting, or a page you can't confidently attribute to a single named company.
 
 Title: ${hit.title}
 URL: ${hit.url}
@@ -74,9 +76,11 @@ Why we think they're a fit: ${relevanceReason || 'industrial company in the targ
 
 Rules:
 - Subject line under 8 words, no clickbait, no emojis.
-- Body: 80-120 words max, plain text, no markdown.
-- Reference their location/industry naturally, not generically.
-- One clear, low-friction call to action (reply or a short call).
+- Body: 150-200 words, written as THREE short paragraphs (not one block):
+  1. Who we are + a specific, non-generic reason we're reaching out to THIS company (their location/industry).
+  2. What we can help with re: ${product.name} — concrete, no fluff, no invented stats or client names.
+  3. One clear, low-friction call to action (reply or a short call) + sign-off.
+- Plain text, no markdown, no bullet points.
 - Sign off as "Team Snehal Printers".
 - Do NOT invent specific past clients, prices, or claims we can't back up.
 
@@ -85,17 +89,16 @@ Respond with ONLY minified JSON, no prose:
 
   let res;
   try {
-    res = await ai.run(MODEL, { messages: [{ role: 'user', content: prompt }], max_tokens: 350 });
+    res = await ai.run(MODEL, { messages: [{ role: 'user', content: prompt }], max_tokens: 500 });
   } catch (e) {
     res = null;
   }
   const text = res ? extractResponseText(res) : '';
   const json = extractJson(text);
-  if (!json) {
-    return {
-      subject: `Printing solutions for ${companyName}`,
-      body: `Hi team,\n\nWe work with companies in the ${area} area on ${product.name}. Would you be open to a quick chat about your current printing/packaging needs?\n\nTeam Snehal Printers`,
-    };
+  if (!json || !json.subject || !json.body) {
+    // No fallback templated email either — if the AI draft failed, the caller
+    // should NOT put a generic email into the approval queue. Signal failure.
+    return null;
   }
   return json;
 }

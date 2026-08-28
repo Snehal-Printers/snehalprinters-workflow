@@ -17,17 +17,30 @@ No Supabase, no AWS. Login users are created manually via a script — there is 
    - specific MIDC pockets (Bhosari, Chakan, Talawade, Hinjewadi, Ranjangaon, etc.)
    - B2B directory scoping (`site:indiamart.com`, `site:justdial.com`, `site:tradeindia.com`)
    - buyer-intent phrasing ("suppliers near", "requirement for", "corporate gifting", etc.)
-3. Every search hit is passed to Workers AI (Llama 3.1 8B) which decides: is this a real
-   company, is it actually in the target MIDC area, and how relevant is it to the product
-   (0-100 score) — junk (news articles, directories' own homepage, out-of-area hits) is dropped.
-4. For surviving hits, the worker scrapes the company's own site (homepage + `/contact`,
-   `/about`, etc.) for a real email; if none is found it falls back to a `info@domain.com`
-   pattern guess and flags it as "guessed" in the UI.
-5. Leads are deduped by domain and saved to D1.
-6. Workers AI drafts a short, specific outreach email per lead into an **approval queue** —
-   nothing is ever sent automatically. You review/edit/approve in the dashboard, then hit Send.
-7. Sending uses **MailChannels** (free from Cloudflare Workers, no extra email provider) — see
+3. Every raw hit that is a document file (PDF/DOC/XLS/PPT/CSV/ZIP) is discarded immediately —
+   these are never companies, and Tavily search results sometimes surface member-list PDFs,
+   government circulars, etc. instead of an actual company page.
+4. Every remaining hit is passed to Workers AI (Llama 3.1 8B) which decides: is this ONE
+   specific real company's own page (not a directory listing, news article, or multi-company
+   list), is it actually in the target MIDC area, and how relevant is it to the product
+   (0-100 score). Junk is dropped.
+5. Qualified candidates are ranked by relevance score, best first. Starting with the top
+   candidate, the worker scrapes the company's own site (homepage + `/contact`, `/about`,
+   etc.) for a **real** email. **There is no fallback or pattern-guessing** — if no real
+   email can be found on a candidate's site, that candidate is discarded entirely and the
+   next-best candidate is tried.
+6. The worker stops at the **first candidate with a real, scraped email** — each run produces
+   **exactly one lead** (or zero, if nothing qualified), not a batch. That single lead is
+   deduped by domain and saved to D1.
+7. Workers AI drafts a medium-length (150-200 word, 3-paragraph), specific outreach email for
+   that one lead into an **approval queue** — but only if a real email was found; nothing is
+   ever drafted for a lead without a verified email, and nothing is ever sent automatically.
+   You review/edit/approve in the dashboard, then hit Send.
+8. Sending uses **MailChannels** (free from Cloudflare Workers, no extra email provider) — see
    the one-time DNS setup below.
+9. The dashboard (`pages/`) is a small React app (loaded via CDN + in-browser Babel, no build
+   step) that polls the API continuously, so Leads/Outreach/History/Run-progress all update
+   live without a manual page refresh.
 
 ---
 
@@ -148,12 +161,15 @@ wrangler d1 execute snehal-leadgen --remote --command="UPDATE products SET activ
 
 - If you're getting too many irrelevant hits: raise the relevance threshold in
   `worker/src/index.js` (`analysis.relevance_score < 40` → `< 60`).
-- If you're not getting enough leads: add more MIDC pockets to `PUNE_MIDC_AREAS` in
-  `worker/src/lib/queries.js`, or add more directory sites to `DIRECTORY_SITES`.
+- If a run finds zero leads: that means no candidate this run had both a qualifying AI score
+  AND a real, scraped email — by design there's no fallback to relax that. Try again later
+  (search results vary), add more MIDC pockets, or broaden the product's `keywords`.
 - Product `keywords` field is the single biggest lever on result quality — treat it like a
   mini search brief (materials, use-case, industry it's usually bought for).
 - Everything AI decides (company match, area match, relevance) is visible in the Leads table
   so you can spot bad patterns and adjust the prompts in `worker/src/lib/ai.js` directly.
+- Each run returns **one lead maximum**, by design — the strongest verified-email match.
+  Run the pipeline again (or wait for the next daily run) to get another.
 
 ## Project structure
 

@@ -239,13 +239,15 @@ async function runLeadGen(db, env, productId, area, trigger = 'manual') {
     await run(db, 'UPDATE workflow_runs SET queries_used=?, hits_scanned=? WHERE id=?', queries.length, hits.length, runId);
     await progress('analyzing', 35);
 
-    let leadsFound = 0;
+    // ---- Stage 1: qualify every hit, keep only real companies in the area ----
+    // (no email lookup yet — that's the expensive/slow step, we only want to do
+    // it for candidates worth pursuing, and only once we know the field).
+    const qualified = [];
     let processed = 0;
 
     for (const hit of hits) {
       processed++;
-      // progress climbs from 35% -> 90% across analyze+scrape+draft phases
-      await progress(processed / hits.length < 0.5 ? 'analyzing' : processed / hits.length < 0.8 ? 'scraping' : 'drafting', 35 + Math.round((processed / Math.max(hits.length, 1)) * 55));
+      await progress('analyzing', 35 + Math.round((processed / Math.max(hits.length, 1)) * 25));
       const analysis = await analyzeHit(env.AI, hit, product, area);
       if (!analysis.is_company || !analysis.is_pune_midc_area) continue;
       if ((analysis.relevance_score || 0) < 40) continue;
@@ -256,44 +258,72 @@ async function runLeadGen(db, env, productId, area, trigger = 'manual') {
       const existing = await one(db, 'SELECT id FROM leads WHERE domain = ?', domain);
       if (existing) continue; // dedupe by domain across all runs
 
-      const emailInfo = await findCompanyEmail(hit.url);
+      qualified.push({ hit, analysis, domain });
+    }
 
-      const insertRes = await run(
-        db,
-        `INSERT OR IGNORE INTO leads
-          (run_id, product_id, company_name, website, domain, email, email_source, phone, area_match, relevance_score, relevance_reason, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')`,
-        runId,
-        productId,
-        analysis.company_name || hit.title,
-        hit.url,
-        domain,
-        emailInfo.email,
-        emailInfo.source,
-        (emailInfo.phones && emailInfo.phones[0]) || null,
-        analysis.area_evidence,
-        analysis.relevance_score,
-        analysis.relevance_reason
-      );
+    // Best candidates first — we're only after ONE final lead, so try the
+    // strongest match first and stop as soon as we have a real, scraped email.
+    qualified.sort((a, b) => (b.analysis.relevance_score || 0) - (a.analysis.relevance_score || 0));
 
-      if (insertRes.meta.changes > 0) {
-        leadsFound++;
-        const leadId = insertRes.meta.last_row_id;
+    // ---- Stage 2: for each candidate (best first), try to find a REAL email ----
+    // No guessing, no fallback pattern — if a candidate's site has no findable
+    // email, we discard it entirely and move to the next candidate. We stop the
+    // instant one qualifies, because we only ever want a single lead per run.
+    let winner = null;
+    let candidatesChecked = 0;
 
-        const draft = await draftOutreachEmail(env.AI, {
-          companyName: analysis.company_name || hit.title,
-          product,
-          area,
-          relevanceReason: analysis.relevance_reason,
-        });
+    for (const c of qualified) {
+      candidatesChecked++;
+      await progress('scraping', 60 + Math.min(20, candidatesChecked * 4));
+      const emailInfo = await findCompanyEmail(c.hit.url);
+      if (!emailInfo.email || !['scraped', 'scraped_footer'].includes(emailInfo.source)) continue; // no fallback — skip
+      winner = { ...c, emailInfo };
+      break;
+    }
 
-        await run(
+    let leadsFound = 0;
+
+    if (winner) {
+      await progress('drafting', 85);
+      const draft = await draftOutreachEmail(env.AI, {
+        companyName: winner.analysis.company_name || winner.hit.title,
+        product,
+        area,
+        relevanceReason: winner.analysis.relevance_reason,
+      });
+
+      // Only create the lead + queue an outreach draft if BOTH a real email and
+      // a valid AI-written draft exist — per the "no guessing, email-only" rule.
+      if (draft) {
+        const insertRes = await run(
           db,
-          `INSERT INTO outreach_queue (lead_id, subject, body, status) VALUES (?, ?, ?, 'pending')`,
-          leadId,
-          draft.subject,
-          draft.body
+          `INSERT OR IGNORE INTO leads
+            (run_id, product_id, company_name, website, domain, email, email_source, phone, area_match, relevance_score, relevance_reason, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')`,
+          runId,
+          productId,
+          winner.analysis.company_name || winner.hit.title,
+          winner.hit.url,
+          winner.domain,
+          winner.emailInfo.email,
+          winner.emailInfo.source,
+          (winner.emailInfo.phones && winner.emailInfo.phones[0]) || null,
+          winner.analysis.area_evidence,
+          winner.analysis.relevance_score,
+          winner.analysis.relevance_reason
         );
+
+        if (insertRes.meta.changes > 0) {
+          leadsFound = 1;
+          const leadId = insertRes.meta.last_row_id;
+          await run(
+            db,
+            `INSERT INTO outreach_queue (lead_id, subject, body, status) VALUES (?, ?, ?, 'pending')`,
+            leadId,
+            draft.subject,
+            draft.body
+          );
+        }
       }
     }
 
@@ -303,7 +333,7 @@ async function runLeadGen(db, env, productId, area, trigger = 'manual') {
     }
 
     await run(db, "UPDATE workflow_runs SET status='completed', progress_step='completed', progress_pct=100, leads_found=?, finished_at=datetime('now') WHERE id=?", leadsFound, runId);
-    return json({ run_id: runId, leads_found: leadsFound, queries_used: queries.length, hits_scanned: hits.length });
+    return json({ run_id: runId, leads_found: leadsFound, queries_used: queries.length, hits_scanned: hits.length, candidates_qualified: qualified.length });
   } catch (err) {
     await run(db, "UPDATE workflow_runs SET status='failed', error=?, finished_at=datetime('now') WHERE id=?", err.message, runId);
     return json({ error: err.message, run_id: runId }, 500);
