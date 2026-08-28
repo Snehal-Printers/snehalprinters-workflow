@@ -139,38 +139,21 @@ export async function findCompanyContact(baseUrl, tavilyKey, { snippetEmails = [
     return { email: snippetEmails[0], phone: snippetPhones[0] || null, source: 'snippet' };
   }
 
-  // ── Layer 2: Tavily /extract (JS-rendered) ──
+  // ── Layer 2: Tavily /extract — batched in ONE call (= 1 sub-request total) ──
   if (tavilyKey) {
-    const pagesToExtract = [
-      baseUrl,
-      `https://${domain}/contact`,
-      `https://${domain}/contact-us`,
-    ].slice(0, 3);
-
-    const contents = await tavilyExtract(tavilyKey, pagesToExtract);
+    const contents = await tavilyExtract(tavilyKey, [baseUrl, `https://${domain}/contact`]);
     for (const content of contents) {
       const emails = extractEmails(content);
       const phones = extractPhones(content);
       if (emails.length > 0) {
         return { email: emails[0], phone: phones[0] || null, source: 'tavily_extract' };
       }
-      if (phones.length > 0) {
-        // Phone found but no email — keep going to other pages before accepting phone-only
-        snippetPhones = [...snippetPhones, ...phones];
-      }
+      if (phones.length > 0) snippetPhones = [...snippetPhones, ...phones];
     }
   }
 
-  // ── Layer 3: Raw HTML fetch fallback ──
-  const candidateUrls = [
-    baseUrl,
-    `https://${domain}/contact`,
-    `https://${domain}/contact-us`,
-    `https://${domain}/contactus`,
-    `https://${domain}/reach-us`,
-    `https://${domain}/about`,
-    `https://${domain}/about-us`,
-  ];
+  // ── Layer 3: Raw HTML — homepage only (1 sub-request max per candidate) ──
+  const candidateUrls = [baseUrl];
 
   let foundPhones = [...snippetPhones];
 

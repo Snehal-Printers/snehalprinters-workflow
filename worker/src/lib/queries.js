@@ -1,46 +1,43 @@
-// ─── queries.js — Rewritten for maximum lead yield ───────────────────────────
+// ─── queries.js — 5 queries per run, max yield per Tavily call ───────────────
 //
-// ROOT CAUSE OF 0 LEADS (original):
-//   Queries like "companies in Bhosari MIDC Pune contact email phone number"
-//   return news articles, association pages, and directories — NOT individual
-//   company websites. Tavily is a web-search engine, not a directory.
+// CONSTRAINT: Tavily free plan = 1500 searches/month.
+// TARGET:     5 searches per run → 300 runs/month.
 //
-// FIX:
-//   1. Target SPECIFIC INDUSTRIES that are dense in each MIDC hub.
-//   2. Use IndiaMART / JustDial / TradeIndia via site: queries — these return
-//      structured listings WITH company name, phone, email in the snippet.
-//   3. Mix "official website" queries (find corporate site) with directory
-//      queries (get contact data from snippet directly).
-//   4. Add Tavily Extract as a fallback to pull emails from scraped pages.
+// STRATEGY — each of the 5 queries serves a different purpose:
+//
+//  Q1: IndiaMART site: query for the specific MIDC hub
+//      → Returns listings WITH seller email/phone in the snippet. Best yield.
+//      → maxResults=15 to get the most leads from one call.
+//
+//  Q2: JustDial site: query for the specific MIDC hub
+//      → Phone numbers are always in JustDial snippets. Great for phone-only leads.
+//
+//  Q3: Industry-specific corporate website query
+//      → Finds real company websites (not directories). Hub + dominant industry.
+//
+//  Q4: TradeIndia / ExportersIndia for the product
+//      → Structured B2B listings. Good for specialty products.
+//
+//  Q5: Generic Pune MIDC "Pvt Ltd" company sweep
+//      → Catches whatever Q1-Q4 missed. Broad but effective.
+//
+// Each run rotates the MIDC hub using a daily seed, so across 8 runs we cover
+// all 8 hubs without repeating.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Each MIDC hub mapped to the dominant industries there.
-// More specific = higher quality Tavily results.
 export const MIDC_HUB_INDUSTRIES = {
-  'Bhosari MIDC':          ['pharmaceutical manufacturer', 'auto parts manufacturer', 'engineering company', 'chemical manufacturer'],
-  'Chakan MIDC':           ['automobile manufacturer', 'auto ancillary company', 'logistics company', 'tyre manufacturer'],
+  'Bhosari MIDC':          ['pharmaceutical manufacturer', 'auto parts manufacturer', 'engineering company'],
+  'Chakan MIDC':           ['automobile manufacturer', 'auto ancillary company', 'logistics company'],
   'Talawade MIDC':         ['IT company', 'electronics manufacturer', 'defence equipment manufacturer'],
-  'Pimpri Chinchwad MIDC': ['forging company', 'casting company', 'heavy machinery manufacturer', 'pump manufacturer'],
-  'Hinjewadi':             ['IT company', 'software company', 'tech startup', 'BPO company'],
-  'Ranjangaon MIDC':       ['FMCG manufacturer', 'food processing company', 'packaging company', 'tyre manufacturer'],
+  'Pimpri Chinchwad MIDC': ['forging company', 'casting company', 'heavy machinery manufacturer'],
+  'Hinjewadi':             ['IT company', 'software company', 'BPO company'],
+  'Ranjangaon MIDC':       ['FMCG manufacturer', 'food processing company', 'packaging company'],
   'Chinchwad':             ['auto parts manufacturer', 'machine tool company', 'rubber products manufacturer'],
   'Hadapsar':              ['IT park company', 'export company', 'manufacturing company'],
 };
 
 export const PUNE_MIDC_AREAS = Object.keys(MIDC_HUB_INDUSTRIES);
 
-// Directory sites — their search pages return listings WITH email/phone in the
-// snippet. We parse the snippet directly, no scraping needed.
-const DIRECTORY_SITES = [
-  'indiamart.com',
-  'justdial.com',
-  'tradeindia.com',
-  'exportersindia.com',
-  'sulekha.com',
-];
-
-// Printing products that are needed by almost every business (generic).
-// For these, ANY real company in Pune is a valid lead.
 const GENERIC_PRODUCT_KEYWORDS = [
   'letterhead', 'letter head', 'business card', 'visiting card',
   'bill book', 'invoice book', 'voucher', 'tag', 'register',
@@ -56,69 +53,43 @@ export function isGenericProduct(product) {
 }
 
 /**
- * Build Tavily queries for a product + area.
- * Returns an array of query strings, ordered best-first.
+ * Returns exactly 5 Tavily queries for a product + area.
  *
- * Strategy:
- *  - Directory site: queries  → get email/phone directly from snippet
- *  - Industry-specific site queries → find real company websites
- *  - JustDial "area" queries → structured local listings
+ * @param {{name:string, keywords?:string}} product
+ * @param {string} area  — specific hub (e.g. "Bhosari MIDC") or "Pune MIDC" (auto-rotated)
+ * @param {number} runSeed — used to rotate hub when area="Pune MIDC"
  */
-export function buildQueries(product, area = 'Pune MIDC') {
+export function buildQueries(product, area = 'Pune MIDC', runSeed = 0) {
   const productName = product.name || '';
-  const keywords    = product.keywords || '';
   const isGeneric   = isGenericProduct(product);
 
-  // Determine which hubs to cover
-  const hubs = (area === 'Pune MIDC') ? PUNE_MIDC_AREAS : [area];
-  const queries = new Set();
+  // Rotate hub per run when "Pune MIDC" is passed (covers all 8 hubs over time)
+  const hub = (area === 'Pune MIDC')
+    ? PUNE_MIDC_AREAS[runSeed % PUNE_MIDC_AREAS.length]
+    : area;
 
-  for (const hub of hubs) {
-    const industries = MIDC_HUB_INDUSTRIES[hub] || ['manufacturing company', 'company'];
+  const industry = (MIDC_HUB_INDUSTRIES[hub] || ['manufacturing company'])[0];
 
-    // ── Tier 1: Directory site: queries (highest yield — snippet has email+phone) ──
-    // IndiaMART listings for this hub
-    queries.add(`site:indiamart.com "${hub}" Pune company`);
-    queries.add(`site:indiamart.com Pune MIDC manufacturer contact email`);
-    // JustDial for local businesses — has phone numbers in snippet
-    queries.add(`site:justdial.com ${hub} Pune companies phone`);
+  const queries = [
+    // Q1 — IndiaMART listings for this hub (snippet has email+phone — highest yield)
+    `site:indiamart.com "${hub}" Pune`,
 
-    // ── Tier 2: Industry-specific corporate website queries ──
-    // Pick top 2 industries for this hub to keep query count sane
-    for (const industry of industries.slice(0, 2)) {
-      if (isGeneric) {
-        // Generic product: just find real companies in this hub
-        queries.add(`${industry} ${hub} Pune Maharashtra official website contact`);
-        queries.add(`"${hub}" "${industry}" Pune site:in OR site:com`);
-      } else {
-        // Specialty product: find companies that specifically need it
-        queries.add(`${industry} ${hub} Pune "${productName}" requirement contact email`);
-        queries.add(`${industry} ${hub} Pune "${productName}" supplier vendor`);
-      }
-    }
+    // Q2 — JustDial for this hub (phone always in snippet)
+    `site:justdial.com "${hub.replace(' MIDC', '')}" Pune companies`,
 
-    // ── Tier 3: JustDial area page scrape (real contact data per company) ──
-    queries.add(`site:justdial.com ${hub.replace(' MIDC', '')} Pune manufacturers contact`);
-  }
+    // Q3 — Industry corporate website (real company site, not directory)
+    isGeneric
+      ? `${industry} "${hub}" Pune official website contact email`
+      : `${industry} "${hub}" Pune "${productName}" contact email`,
 
-  // ── Tier 4: TradeIndia / ExportersIndia product queries (nationwide but filterable) ──
-  if (!isGeneric) {
-    queries.add(`site:tradeindia.com "${productName}" Pune buyer`);
-    queries.add(`site:exportersindia.com "${productName}" Pune Maharashtra`);
-  } else {
-    queries.add(`site:tradeindia.com Pune MIDC manufacturing companies contact`);
-  }
+    // Q4 — TradeIndia structured B2B listings
+    isGeneric
+      ? `site:tradeindia.com Pune MIDC manufacturer`
+      : `site:tradeindia.com "${productName}" Pune`,
 
-  // ── Tier 5: Direct Google-style company search ──
-  // "Pvt Ltd" or "Industries" in Pune MIDC — finds corporate sites directly
-  queries.add(`"Pvt Ltd" OR "Industries" OR "Enterprises" Pimpri Pune email contact site:in`);
-  queries.add(`manufacturing company Bhosari Pune email contact official website`);
-  queries.add(`pharma company Bhosari MIDC Pune contact email phone`);
-  queries.add(`IT company Hinjewadi Pune contact email`);
+    // Q5 — Broad Pune MIDC Pvt Ltd sweep (catches whatever Q1-Q4 missed)
+    `"Pvt Ltd" OR "Industries" OR "Enterprises" "${hub}" Pune contact`,
+  ];
 
-  // ── Tier 6: JustDial broad Pune MIDC search ──
-  queries.add(`site:justdial.com MIDC Pune industrial companies phone number`);
-  queries.add(`site:indiamart.com Pimpri Chinchwad manufacturer contact`);
-
-  return [...queries].slice(0, 40); // cap at 40 queries to stay within Tavily limits
+  return queries; // exactly 5
 }

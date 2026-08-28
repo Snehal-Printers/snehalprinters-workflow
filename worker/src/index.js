@@ -245,7 +245,7 @@ async function login(request, db) {
 //  Stage 4: Find up to MAX_LEADS_PER_RUN (5) leads, not just 1.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const MAX_LEADS_PER_RUN   = 5;    // was 1 — this alone was causing 0-lead runs
+const MAX_LEADS_PER_RUN   = 3;    // 3 leads per run, 3 candidates checked = ~12 sub-requests total
 const MIN_RELEVANCE_SCORE = 30;   // was 40, and combined with area gate = too strict
 
 async function runLeadGen(db, env, productId, area, trigger = 'manual') {
@@ -272,7 +272,8 @@ async function runLeadGen(db, env, productId, area, trigger = 'manual') {
     const tavilyKey = await env.TAVILY_API_KEY.get();
     if (!tavilyKey) throw new Error('TAVILY_API_KEY secret is empty or not set in Secrets Store');
 
-    const queries   = buildQueries(product, area);
+    const runSeed   = runId % 8; // rotate MIDC hub across runs
+    const queries   = buildQueries(product, area, runSeed);
     const seenUrls  = new Set();
     const seenDoms  = new Set();
     let hits        = [];
@@ -289,7 +290,7 @@ async function runLeadGen(db, env, productId, area, trigger = 'manual') {
       } catch (e) {
         lastErr = e.message;
       }
-      if (hits.length >= 80) break; // enough raw material
+      if (hits.length >= 30) break; // 5 queries × up to 10 results each
     }
 
     if (hits.length === 0 && lastErr) {
@@ -375,6 +376,7 @@ async function runLeadGen(db, env, productId, area, trigger = 'manual') {
 
     for (const c of qualified) {
       if (leadsFound >= MAX_LEADS_PER_RUN) break;
+      if (candidatesChecked >= 3) break; // sub-request budget: max 3 candidates scraped per run
       candidatesChecked++;
 
       await progress('scraping', 40 + Math.min(30, candidatesChecked * 3));
