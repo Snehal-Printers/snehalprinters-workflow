@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Snehal Printers — Lead Generation</title>
+<link rel="stylesheet" href="/assets/style.css" />
+</head>
+<body>
+
+<div id="login-screen" class="screen">
+  <div class="card login-card">
+    <h1>Snehal Printers</h1>
+    <p class="muted">Lead Generation Dashboard</p>
+    <input id="login-email" type="email" placeholder="Email" />
+    <input id="login-password" type="password" placeholder="Password" />
+    <button id="login-btn">Log in</button>
+    <p id="login-error" class="error"></p>
+  </div>
+</div>
+
+<div id="app-screen" class="screen hidden">
+  <header>
+    <h1>Snehal Printers — Lead Gen</h1>
+    <div>
+      <span id="user-email" class="muted"></span>
+      <button id="logout-btn" class="ghost">Log out</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="run">Run Pipeline</button>
+    <button class="tab-btn" data-tab="leads">Leads</button>
+    <button class="tab-btn" data-tab="outreach">Approval Queue</button>
+    <button class="tab-btn" data-tab="products">Products</button>
+    <button class="tab-btn" data-tab="history">History</button>
+    <button class="tab-btn" data-tab="settings">Settings</button>
+  </nav>
+
+  <section id="tab-run" class="tab-panel">
+    <div class="card">
+      <h2>1. Product</h2>
+      <select id="product-select"></select>
+      <button id="scrape-products-btn" class="ghost small">Re-scan snehalprinters.in for products</button>
+
+      <div class="add-product">
+        <input id="new-product-name" placeholder="Or add a product manually (name)" />
+        <input id="new-product-keywords" placeholder="Extra keywords (optional)" />
+        <button id="add-product-btn" class="small">Add</button>
+      </div>
+
+      <h2>2. Area</h2>
+      <select id="area-select"></select>
+
+      <button id="run-btn" class="primary">Run Lead Generation</button>
+      <div id="progress-wrap" class="progress-wrap hidden">
+        <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+        <p id="run-status" class="muted"></p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Recent Runs</h2>
+      <table id="runs-table">
+        <thead><tr><th>Product</th><th>Area</th><th>Status</th><th>Leads</th><th>Started</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-leads" class="tab-panel hidden">
+    <div class="card">
+      <h2>Leads</h2>
+      <table id="leads-table">
+        <thead><tr><th>Company</th><th>Email</th><th>Phone</th><th>Score</th><th>Why</th><th>Website</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-outreach" class="tab-panel hidden">
+    <div class="card">
+      <h2>Pending Approval</h2>
+      <div id="outreach-list"></div>
+    </div>
+  </section>
+
+  <section id="tab-products" class="tab-panel hidden">
+    <div class="card">
+      <h2>All Products</h2>
+      <table id="products-table">
+        <thead><tr><th>Name</th><th>Source</th><th>URL</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-history" class="tab-panel hidden">
+    <div class="card">
+      <h2>History</h2>
+      <p class="muted">Every run, manual or automatic (daily 10 AM IST), with results.</p>
+      <table id="history-table">
+        <thead><tr><th>Product</th><th>Area</th><th>Trigger</th><th>Status</th><th>Leads</th><th>Sent</th><th>Started</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-settings" class="tab-panel hidden">
+    <div class="card">
+      <h2>Settings</h2>
+      <label class="muted">Send approval-request emails to</label>
+      <input id="approval-email" type="email" placeholder="you@snehalprinters.in" />
+      <p class="muted">Every morning at 10:00 AM IST the pipeline runs automatically for all active products across the whole Pune MIDC belt. Once new outreach drafts are ready, an email is sent here asking you to review and approve them.</p>
+      <button id="save-settings-btn" class="primary">Save</button>
+      <p id="settings-status" class="muted"></p>
+    </div>
+  </section>
+</div>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>
