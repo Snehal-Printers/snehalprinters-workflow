@@ -1,0 +1,55 @@
+name               = "snehal-printers-job-runner"
+main               = "../workers/src/job-runner.js"
+compatibility_date = "2025-04-01"
+
+[observability.logs]
+enabled         = true
+invocation_logs = true
+
+[triggers]
+# Runs every minute, picks up one pending job from D1 job_queue, executes it.
+crons = ["* * * * *"]
+
+# Workers AI binding — used for all text generation.
+[ai]
+binding = "AI"
+
+[[d1_databases]]
+binding       = "DB"
+database_name = "snehal-printers-workflows"
+database_id   = "f3e25cd8-6393-4034-921b-cf96aa51da4a"   # same D1 database as workers/wrangler.toml
+
+[[secrets_store_secrets]]
+binding = "SUPABASE_SERVICE_KEY"
+store_id = "61701f5a905946c29837feed5c149410"
+secret_name = "SUPABASE_SERVICE_KEY"
+
+[[secrets_store_secrets]]
+binding = "SUPABASE_URL"
+store_id = "61701f5a905946c29837feed5c149410"
+secret_name = "SUPABASE_URL"
+
+[[secrets_store_secrets]]
+binding = "TAVILY_API_KEY"
+store_id = "61701f5a905946c29837feed5c149410"
+secret_name = "TAVILY_API_KEY"
+
+[[secrets_store_secrets]]
+binding = "RESEND_API_KEY"
+store_id = "61701f5a905946c29837feed5c149410"
+secret_name = "RESEND_API_KEY"
+
+[[secrets_store_secrets]]
+binding = "SENDER_EMAIL"
+store_id = "61701f5a905946c29837feed5c149410"
+secret_name = "SENDER_EMAIL"
+
+[[secrets_store_secrets]]
+binding = "REVIEWER_EMAIL"
+store_id = "61701f5a905946c29837feed5c149410"
+secret_name = "REVIEWER_EMAIL"
+
+[[secrets_store_secrets]]
+binding = "API_BASE_URL"
+store_id = "61701f5a905946c29837feed5c149410"
+secret_name = "API_BASE_URL"

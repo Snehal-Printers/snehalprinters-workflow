@@ -1,98 +1,83 @@
--- Snehal Printers Lead Gen Pipeline — D1 schema
--- Single-tenant DB. Run once: wrangler d1 execute snehal-leadgen --file=./d1/schema.sql
+-- D1 Schema — Snehal Printers Lead Workflow Engine
+-- Run via: wrangler d1 execute snehal-printers-workflows --file=d1/schema.sql
+--
+-- Tables:
+--   job_queue       (step-by-step job queue for the job-runner worker)
+--   workflow_runs   (one row per triggered workflow, drives progress UI)
+--   approval_queue  (human-in-the-loop approval gates)
 
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  email TEXT UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,      
-  password_salt TEXT NOT NULL,
-  name TEXT,
-  role TEXT DEFAULT 'admin',
-  created_at TEXT DEFAULT (datetime('now'))
+
+-- ── job_queue ────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS job_queue (
+  id               TEXT PRIMARY KEY,
+  workflow_run_id  TEXT,
+  workflow_type    TEXT NOT NULL,
+  step_name        TEXT NOT NULL,
+  status           TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending','running','done','failed','stopped','waiting_for_approval')),
+  payload          TEXT NOT NULL DEFAULT '{}',
+  retry_count      INTEGER NOT NULL DEFAULT 0,
+  error_msg        TEXT,
+  created_at       TEXT NOT NULL,
+  picked_up_at     TEXT,
+  completed_at     TEXT
 );
 
-CREATE TABLE IF NOT EXISTS sessions (
-  token TEXT PRIMARY KEY,
-  user_id INTEGER NOT NULL,
-  expires_at TEXT NOT NULL,
-  created_at TEXT DEFAULT (datetime('now')),
-  FOREIGN KEY (user_id) REFERENCES users(id)
-);
+CREATE INDEX IF NOT EXISTS idx_job_queue_pending
+  ON job_queue (status, created_at ASC);
 
-CREATE TABLE IF NOT EXISTS products (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  url TEXT,
-  description TEXT,
-  keywords TEXT,              
-  source TEXT DEFAULT 'scraped', 
-  active INTEGER DEFAULT 1,
-  created_at TEXT DEFAULT (datetime('now'))
-);
+CREATE INDEX IF NOT EXISTS idx_job_queue_run
+  ON job_queue (workflow_run_id);
+
+
+-- ── workflow_runs ────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS workflow_runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  product_id INTEGER,
-  area TEXT DEFAULT 'Pune MIDC',
-  trigger TEXT DEFAULT 'manual',   
-  status TEXT DEFAULT 'running',   
-  progress_step TEXT DEFAULT 'queued',   
-  progress_pct INTEGER DEFAULT 0,        
-  queries_used INTEGER DEFAULT 0,
-  hits_scanned INTEGER DEFAULT 0,
-  leads_found INTEGER DEFAULT 0,
-  error TEXT,
-  started_at TEXT DEFAULT (datetime('now')),
-  finished_at TEXT,
-  FOREIGN KEY (product_id) REFERENCES products(id)
+  id            TEXT PRIMARY KEY,
+  workflow_type TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'running'
+                CHECK (status IN ('running','succeeded','failed','stopped','timed_out','awaiting_approval','paused')),
+  input         TEXT DEFAULT '{}',
+  output        TEXT,
+  error_msg     TEXT,
+  started_at    TEXT NOT NULL,
+  completed_at  TEXT
 );
 
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_status
+  ON workflow_runs (status, started_at DESC);
 
-CREATE TABLE IF NOT EXISTS settings (
-  key TEXT PRIMARY KEY,
-  value TEXT,
-  updated_at TEXT DEFAULT (datetime('now'))
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_type
+  ON workflow_runs (workflow_type, started_at DESC);
+
+
+-- ── approval_queue ───────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS approval_queue (
+  id               TEXT PRIMARY KEY,
+  workflow_type    TEXT NOT NULL,
+  workflow_run_id  TEXT,
+  reference_id     TEXT,
+  task_token       TEXT,
+  payload          TEXT DEFAULT '{}',
+  preview_html     TEXT DEFAULT '',
+  status           TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending','approved','rejected','expired')),
+  review_note      TEXT,
+  email_token      TEXT,
+  token_expires_at TEXT,
+  token_used_at    TEXT,
+  reviewed_at      TEXT,
+  created_at       TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS leads (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id INTEGER,
-  product_id INTEGER,
-  company_name TEXT,
-  website TEXT,
-  domain TEXT,
-  email TEXT,
-  email_source TEXT,           
-  phone TEXT,
-  address TEXT,
-  area_match TEXT,             
-  relevance_score INTEGER,     
-  relevance_reason TEXT,
-  status TEXT DEFAULT 'new',   
-  created_at TEXT DEFAULT (datetime('now')),
-  UNIQUE(domain, email),
-  FOREIGN KEY (run_id) REFERENCES workflow_runs(id),
-  FOREIGN KEY (product_id) REFERENCES products(id)
-);
+CREATE INDEX IF NOT EXISTS idx_approval_queue_status
+  ON approval_queue (status, created_at DESC);
 
-CREATE TABLE IF NOT EXISTS outreach_queue (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  lead_id INTEGER NOT NULL,
-  subject TEXT,
-  body TEXT,
-  status TEXT DEFAULT 'pending',  
-  approved_by INTEGER,
-  created_at TEXT DEFAULT (datetime('now')),
-  sent_at TEXT,
-  FOREIGN KEY (lead_id) REFERENCES leads(id),
-  FOREIGN KEY (approved_by) REFERENCES users(id)
-);
+CREATE INDEX IF NOT EXISTS idx_approval_queue_run
+  ON approval_queue (workflow_run_id);
 
-CREATE INDEX IF NOT EXISTS idx_leads_run ON leads(run_id);
-CREATE INDEX IF NOT EXISTS idx_leads_domain ON leads(domain);
-CREATE INDEX IF NOT EXISTS idx_outreach_status ON outreach_queue(status);
-
--- ─── Migration: add candidates_qualified column to workflow_runs ──────────────
--- Run this if you already have the DB created with the original schema:
---   wrangler d1 execute snehal-leadgen --command="ALTER TABLE workflow_runs ADD COLUMN candidates_qualified INTEGER DEFAULT 0"
-ALTER TABLE workflow_runs ADD COLUMN candidates_qualified INTEGER DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_approval_queue_token
+  ON approval_queue (email_token)
+  WHERE email_token IS NOT NULL;

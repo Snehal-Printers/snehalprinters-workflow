@@ -1,0 +1,339 @@
+import { useState, useEffect }      from 'react'
+import { useSearchParams }          from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { startWorkflow, getLeads }  from '../services/api'
+import { PageHeader, EmptyState, Skeleton } from '../components/ui'
+import WorkflowProgress, { LEAD_GEN_STEPS, LEAD_EMAIL_STEPS } from '../components/WorkflowProgress'
+import {
+  Users, MapPin, Play, RefreshCw,
+  Globe, Mail, Building2,
+  AlertTriangle, Send,
+} from 'lucide-react'
+import toast from 'react-hot-toast'
+import { formatDistanceToNow } from 'date-fns'
+
+// ── Snehal Printers product angles (rotate automatically per run) ─────────
+const PRODUCT_GROUPS = [
+  { name: 'Corporate Stationery',              items: 'Letter Heads, Envelopes, Business Cards, Bill Books, Registers, Office Files' },
+  { name: 'Reports & Marketing Collateral',    items: 'Annual Reports, Brochures, Newsletters, Flyers & Leaflets' },
+  { name: 'Warehouse & Ops Documentation',     items: 'Challans, Delivery Challans, Gate Passes, Vouchers & Tags' },
+  { name: 'Labels, Stickers & Notepads',       items: 'Labels & Stickers, Parking Stickers, Notepads & Deskpads' },
+]
+
+// ── Quick location presets — Pune / Bhosari / MIDC belt ────────────────────
+const PRESETS = [
+  'Bhosari, Pune',
+  'Bhosari MIDC, Pune',
+  'Pimpri-Chinchwad, Pune',
+  'Pune MIDC',
+  'Chakan MIDC, Pune',
+  'Hadapsar, Pune',
+]
+
+const STATUS_CONFIG = {
+  new:          { label: 'New',          dot: 'bg-amber-400',   text: 'text-amber-700',   bg: 'bg-amber-50'   },
+  emailed:      { label: 'Emailed',      dot: 'bg-emerald-400', text: 'text-emerald-700', bg: 'bg-emerald-50' },
+  followed_up:  { label: 'Followed up',  dot: 'bg-blue-400',    text: 'text-blue-700',    bg: 'bg-blue-50'    },
+  converted:    { label: 'Converted',    dot: 'bg-blue-600',    text: 'text-blue-700',    bg: 'bg-blue-50'    },
+  rejected:     { label: 'Rejected',     dot: 'bg-red-400',     text: 'text-red-600',     bg: 'bg-red-50'     },
+}
+
+export default function LeadGeneration() {
+  const qc = useQueryClient()
+  const [searchParams] = useSearchParams()
+  const [mode, setMode] = useState(searchParams.get('tab') === 'followup' ? 'followup' : 'new')
+
+  const [location,     setLocation]     = useState('')
+  const [followupLead, setFollowupLead] = useState('')
+  const [launching,    setLaunching]    = useState(false)
+  const [activeRunId,  setActiveRunId]  = useState(null)
+  const [statusFilter, setStatusFilter] = useState('all')
+
+  useEffect(() => {
+    if (searchParams.get('tab') === 'followup') setMode('followup')
+  }, [searchParams])
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey:       ['leads', statusFilter],
+    queryFn:        () => getLeads(
+      statusFilter === 'all' ? 'order=created_at.desc&limit=100'
+                             : `status=eq.${statusFilter}&order=created_at.desc&limit=100`
+    ),
+    refetchInterval: 30_000,
+  })
+  const leads = data?.leads || []
+
+  async function handleLaunchNew(e) {
+    e?.preventDefault()
+    setLaunching(true)
+    setActiveRunId(null)
+    try {
+      // location is optional — defaults to the Pune/Bhosari/MIDC belt server-side
+      const res = await startWorkflow('lead-generation', location.trim() ? { location: location.trim() } : {})
+      setActiveRunId(res.workflowRunId)
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      setLaunching(false)
+    }
+  }
+
+  async function handleLaunchFollowup(e) {
+    e?.preventDefault()
+    if (!followupLead) { toast.error('Select a lead to follow up on'); return }
+    setLaunching(true)
+    setActiveRunId(null)
+    try {
+      const res = await startWorkflow('lead-email-existing', { leadId: followupLead })
+      setActiveRunId(res.workflowRunId)
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      setLaunching(false)
+    }
+  }
+
+  function handleComplete(status) {
+    if (status === 'awaiting_approval') {
+      toast.success('Draft ready — check the Approvals page to review and send')
+      qc.invalidateQueries({ queryKey: ['pending-approvals-count'] })
+    } else if (status === 'stopped') {
+      toast('Company already in database — skipped', { icon: '⚠️' })
+    } else if (status === 'failed') {
+      toast.error('Workflow failed — check the progress panel for details')
+    }
+    qc.invalidateQueries({ queryKey: ['leads'] })
+    qc.invalidateQueries({ queryKey: ['dashboard'] })
+  }
+
+  const FILTERS = ['all', 'new', 'emailed', 'followed_up', 'converted', 'rejected']
+
+  return (
+    <div className="p-6 max-w-5xl mx-auto">
+      <PageHeader icon={Users} title="Lead Generation"
+        sub="Find real companies near Bhosari / Pune MIDC and draft a personalised print & stationery outreach email">
+        <button onClick={() => refetch()} className="btn-secondary">
+          <RefreshCw size={14} /> Refresh
+        </button>
+      </PageHeader>
+
+      {/* ── Mode Toggle ──────────────────────────────────────────────────── */}
+      <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5 mb-5 w-fit">
+        <button onClick={() => setMode('new')}
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors
+            ${mode === 'new' ? 'bg-white text-navy shadow-sm' : 'text-slate-500 hover:text-navy'}`}>
+          <MapPin size={13} /> Find New Leads
+        </button>
+        <button onClick={() => setMode('followup')}
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors
+            ${mode === 'followup' ? 'bg-white text-navy shadow-sm' : 'text-slate-500 hover:text-navy'}`}>
+          <Send size={13} /> Follow Up on a Lead
+        </button>
+      </div>
+
+      {/* ── Launch Panel — Find New Leads ────────────────────────────────── */}
+      {mode === 'new' && (
+      <div className="card p-5 mb-5">
+        <p className="text-sm font-semibold text-navy mb-4 flex items-center gap-2">
+          <MapPin size={15} className="text-amber" /> Find Leads Near Bhosari / Pune MIDC
+        </p>
+
+        <div className="flex gap-3 mb-4">
+          <div className="relative flex-1">
+            <MapPin size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              value={location}
+              onChange={e => setLocation(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleLaunchNew()}
+              placeholder="Leave blank to use Bhosari / Pune MIDC belt, or type a location…"
+              className="input pl-8 w-full"
+            />
+          </div>
+          <button
+            onClick={handleLaunchNew}
+            disabled={launching}
+            className="btn-primary gap-2 px-5 disabled:opacity-50 whitespace-nowrap">
+            {launching
+              ? <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/>Finding…</>
+              : <><Play size={14} />Find Lead</>
+            }
+          </button>
+        </div>
+
+        {/* Quick presets */}
+        <div className="flex flex-wrap gap-1.5 mb-5">
+          {PRESETS.map(p => (
+            <button key={p}
+              onClick={() => setLocation(p)}
+              className={`px-2.5 py-1 rounded-full text-xs border transition-colors
+                ${location === p
+                  ? 'bg-navy text-white border-navy'
+                  : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-300'}`}>
+              {p}
+            </button>
+          ))}
+        </div>
+
+        {/* Product targeting info */}
+        <div className="border border-slate-100 rounded-xl overflow-hidden">
+          <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-100">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              Product angle rotates automatically across each run
+            </p>
+          </div>
+          <div className="divide-y divide-slate-50">
+            {PRODUCT_GROUPS.map(p => (
+              <div key={p.name} className="flex items-center gap-4 px-4 py-2.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-amber flex-shrink-0" />
+                <span className="text-xs font-medium text-navy w-56 flex-shrink-0">{p.name}</span>
+                <span className="text-xs text-slate-400">{p.items}</span>
+              </div>
+            ))}
+          </div>
+          <div className="bg-blue-50 px-4 py-2.5 border-t border-blue-100">
+            <p className="text-xs text-blue-700">
+              <strong>How it works:</strong> Every company needs print & stationery, so there's no industry
+              filter — the AI finds any real, active company in the area and leads the outreach with a
+              different product category each run.
+            </p>
+          </div>
+        </div>
+      </div>
+      )}
+
+      {/* ── Launch Panel — Follow Up on a Lead ───────────────────────────── */}
+      {mode === 'followup' && (
+      <div className="card p-5 mb-5">
+        <p className="text-sm font-semibold text-navy mb-4 flex items-center gap-2">
+          <Send size={15} className="text-amber" /> Draft a Follow-up Email
+        </p>
+        <div className="flex gap-3">
+          <select
+            value={followupLead}
+            onChange={e => setFollowupLead(e.target.value)}
+            className="input flex-1">
+            <option value="">Select a lead…</option>
+            {leads.map(l => (
+              <option key={l.id} value={l.id}>
+                {l.company_name} — {l.status}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={handleLaunchFollowup}
+            disabled={launching || !followupLead}
+            className="btn-primary gap-2 px-5 disabled:opacity-50 whitespace-nowrap">
+            {launching
+              ? <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/>Drafting…</>
+              : <><Play size={14} />Draft Follow-up</>
+            }
+          </button>
+        </div>
+        <p className="text-xs text-slate-400 mt-3">
+          The AI writes a fresh follow-up based on this lead's saved details — you'll approve it before it sends.
+        </p>
+      </div>
+      )}
+
+      {/* ── Live Progress ─────────────────────────────────────────────────── */}
+      {activeRunId && (
+        <div className="mb-5">
+          <WorkflowProgress
+            runId={activeRunId}
+            stepLabels={mode === 'followup' ? LEAD_EMAIL_STEPS : LEAD_GEN_STEPS}
+            onComplete={handleComplete}
+            onClose={() => setActiveRunId(null)}
+          />
+        </div>
+      )}
+
+      {/* ── Leads Table ──────────────────────────────────────────────────── */}
+      <div className="card overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between flex-wrap gap-3">
+          <span className="text-sm font-semibold text-navy">
+            Leads ({leads.length})
+          </span>
+          <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5">
+            {FILTERS.map(f => (
+              <button key={f} onClick={() => setStatusFilter(f)}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium capitalize transition-colors
+                  ${statusFilter === f ? 'bg-white text-navy shadow-sm' : 'text-slate-500 hover:text-navy'}`}>
+                {f.replace(/_/g, ' ')}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {isLoading ? (
+          <div className="p-4 space-y-2">
+            {Array(5).fill(0).map((_, i) => <Skeleton key={i} className="h-16" />)}
+          </div>
+        ) : leads.length === 0 ? (
+          <EmptyState icon={Users}
+            title={statusFilter === 'all' ? 'No leads yet' : `No ${statusFilter.replace(/_/g,' ')} leads`}
+            sub="Click Find Lead above to start generating prospects near Bhosari / Pune MIDC" />
+        ) : (
+          <div className="divide-y divide-slate-50">
+            {leads.map(lead => {
+              const cfg = STATUS_CONFIG[lead.status] || STATUS_CONFIG.new
+              return (
+                <div key={lead.id} className="px-5 py-4 hover:bg-slate-50/60 transition-colors">
+                  <div className="flex items-start gap-3">
+                    <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${cfg.dot}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className="font-semibold text-navy text-sm">{lead.company_name}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${cfg.bg} ${cfg.text}`}>
+                          {cfg.label}
+                        </span>
+                        {lead.industry && (
+                          <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+                            {lead.industry}
+                          </span>
+                        )}
+                        {lead.product_focus && (
+                          <span className="flex items-center gap-1 text-xs text-royal">
+                            <Building2 size={10} /> {lead.product_focus}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-4 flex-wrap text-xs text-slate-500">
+                        {lead.email && (
+                          <a href={`mailto:${lead.email}`}
+                            className="flex items-center gap-1 hover:text-navy transition-colors">
+                            <Mail size={11} />{lead.email}
+                          </a>
+                        )}
+                        {lead.website && (
+                          <a href={lead.website} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center gap-1 hover:text-navy transition-colors">
+                            <Globe size={11} />{lead.website.replace(/^https?:\/\/(www\.)?/, '')}
+                          </a>
+                        )}
+                        {lead.address && (
+                          <span className="flex items-center gap-1">
+                            <MapPin size={11} />{lead.address}
+                          </span>
+                        )}
+                        <span className="text-slate-300">
+                          {formatDistanceToNow(new Date(lead.created_at), { addSuffix: true })}
+                        </span>
+                      </div>
+
+                      {lead.description && (
+                        <p className="mt-1.5 text-xs text-slate-400 italic line-clamp-2">
+                          {lead.description}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

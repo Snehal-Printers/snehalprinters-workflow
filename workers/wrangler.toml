@@ -1,0 +1,63 @@
+name               = "snehal-printers-workflows"
+main               = "src/api-router.js"
+compatibility_date = "2025-04-01"
+workers_dev        = true
+
+[observability.logs]
+enabled         = true
+invocation_logs = true
+
+# Workers AI binding — used for all text generation (company/email extraction,
+# email drafting). No external LLM API key required.
+[ai]
+binding = "AI"
+
+[[d1_databases]]
+binding       = "DB"
+database_name = "snehal-printers-workflows"
+database_id   = "f3e25cd8-6393-4034-921b-cf96aa51da4a"
+
+# ── Secrets (set via `wrangler secret put NAME`, NOT committed here) ──────
+# SUPABASE_URL
+# SUPABASE_SERVICE_KEY
+# TAVILY_API_KEY
+# RESEND_API_KEY
+# SENDER_EMAIL        (e.g. info@snehalprinters.in)
+# REVIEWER_EMAIL      (who gets the approval-request emails)
+# API_BASE_URL        (this worker's public URL, e.g. https://snehal-printers-workflows.<subdomain>.workers.dev)
+
+
+[[secrets_store_secrets]]
+binding = "SUPABASE_SERVICE_KEY"
+store_id = "61701f5a905946c29837feed5c149410"
+secret_name = "SUPABASE_SERVICE_KEY"
+
+[[secrets_store_secrets]]
+binding = "SUPABASE_URL"
+store_id = "61701f5a905946c29837feed5c149410"
+secret_name = "SUPABASE_URL"
+
+[[secrets_store_secrets]]
+binding = "TAVILY_API_KEY"
+store_id = "61701f5a905946c29837feed5c149410"
+secret_name = "TAVILY_API_KEY"
+
+[[secrets_store_secrets]]
+binding = "RESEND_API_KEY"
+store_id = "61701f5a905946c29837feed5c149410"
+secret_name = "RESEND_API_KEY"
+
+[[secrets_store_secrets]]
+binding = "SENDER_EMAIL"
+store_id = "61701f5a905946c29837feed5c149410"
+secret_name = "SENDER_EMAIL"
+
+[[secrets_store_secrets]]
+binding = "REVIEWER_EMAIL"
+store_id = "61701f5a905946c29837feed5c149410"
+secret_name = "REVIEWER_EMAIL"
+
+[[secrets_store_secrets]]
+binding = "API_BASE_URL"
+store_id = "61701f5a905946c29837feed5c149410"
+secret_name = "API_BASE_URL"
