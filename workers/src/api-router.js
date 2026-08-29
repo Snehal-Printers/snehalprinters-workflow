@@ -56,11 +56,35 @@ export default {
         return handleData(path, method, request, qs, sb, d1)
 
       if (path === '/debug-env' && method === 'GET') {
+        const resolve = async (v) => {
+          if (!v) return null
+          if (typeof v === 'object' && typeof v.get === 'function') {
+            try { return await v.get() } catch (e) { return `ERROR: ${e.message}` }
+          }
+          return String(v)
+        }
+        const mask = (s) => (s && s.length > 8 && !s.startsWith('ERROR')) ? s.slice(0, 4) + '…' + s.slice(-4) : s
+
+        const [supabaseUrl, supabaseKey, tavilyKey, resendKey, senderEmail, reviewerEmail, apiBaseUrl] =
+          await Promise.all([
+            resolve(env.SUPABASE_URL),
+            resolve(env.SUPABASE_SERVICE_KEY),
+            resolve(env.TAVILY_API_KEY),
+            resolve(env.RESEND_API_KEY),
+            resolve(env.SENDER_EMAIL),
+            resolve(env.REVIEWER_EMAIL),
+            resolve(env.API_BASE_URL),
+          ])
+
         return new Response(JSON.stringify({
-          has_supabase_url: !!env.SUPABASE_URL,
-          has_supabase_key: !!env.SUPABASE_SERVICE_KEY,
-          has_tavily_key:   !!env.TAVILY_API_KEY,
-          has_db:           !!env.DB,
+          supabase_url:    mask(supabaseUrl),
+          supabase_key:    mask(supabaseKey),
+          tavily_key:      mask(tavilyKey),
+          resend_key:      mask(resendKey),
+          sender_email:    senderEmail,
+          reviewer_email:  reviewerEmail,
+          api_base_url:    apiBaseUrl,
+          has_db_binding:  !!env.DB,
         }), { status: 200, headers: { 'Content-Type': 'application/json', ...CORS } })
       }
 

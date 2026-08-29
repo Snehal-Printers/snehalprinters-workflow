@@ -7,7 +7,7 @@
 --   approval_queue  (human-in-the-loop approval gates)
 
 
--- ── job_queue ────────────────────────────────────────────────────────────────
+
 
 CREATE TABLE IF NOT EXISTS job_queue (
   id               TEXT PRIMARY KEY,
@@ -51,8 +51,6 @@ CREATE INDEX IF NOT EXISTS idx_workflow_runs_status
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_type
   ON workflow_runs (workflow_type, started_at DESC);
 
-
--- ── approval_queue ───────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS approval_queue (
   id               TEXT PRIMARY KEY,
